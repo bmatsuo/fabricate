@@ -543,7 +543,10 @@ class StraceRunner(Runner):
     # 3618  clone( <unfinished ...>
     # 3618  <... clone resumed> child_stack=0, flags=CLONE, child_tidptr=0x7f83deffa780) = 3622
     _unfinished_start_re = re.compile(r'(?P<pid>\d+)(?P<body>.*)<unfinished ...>$')
-    _unfinished_end_re   = re.compile(r'(?P<pid>\d+)\s+\<\.\.\..*\>(?P<body>.*)')
+    _unfinished_end_re = re.compile(
+        r'(?P<pid>\d+)\s+'
+        r'\<\.\.\.(?:\s+(?P<syscall>\w+)\s+resumed)?.*\>'
+        r'(?P<body>.*)')
 
     def _do_strace(self, args, kwargs, outfile, outname):
         """ Run strace on given command args/kwargs, sending output to file.
@@ -591,8 +594,29 @@ class StraceRunner(Runner):
         elif unfinished_end_match:
             pid = unfinished_end_match.group('pid')
             body = unfinished_end_match.group('body')
-            line = unfinished[pid] + body
-            del unfinished[pid]
+            try:
+                line = unfinished[pid] + body
+                del unfinished[pid]
+            except KeyError:
+                # BUG:
+                # some 'resumed' lines for untraced system calls may appear in
+                # the strace output.  when this is the case we have (probably?)
+                # not seen the start of the call.  this behavior may be either
+                # a bug or an unavoidable issue with strace due to the nature
+                # of strace when tracing a subset of system calls.  it has been
+                # observed in the following systems:
+                #   strace - version 4.8 -- Ubuntu desktop 14.04 LTS 3.13.0-43-generic
+                # from the strace manual regarding usage of `-e trace=set`:
+                #   Be careful when making inferences about the user/kernel
+                #   boundary if  only  a  subset  of system  calls  are being
+                #   monitored.  The default is trace=all.
+                syscall = unfinished_end_match.group('syscall')
+                if syscall and syscall not in self.strace_system_calls:
+                    err = 'unexpected syscall in strace: {}'.format(syscall)
+                    self._builder.echo_debug(err)
+                    return
+                else:
+                    raise
 
         is_output = False
         open_match = self._open_re.match(line)
