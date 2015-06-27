@@ -701,6 +701,18 @@ class StraceRunner(Runner):
             return True
         else:
             return False
+
+    def _copy_strace_log(self, src, dest):
+        if os.path.exists(dest):
+            self._builder.echo('debug strace output destination exists {}'.format(dest))
+            return
+
+        try:
+            cp = subprocess.check_call(["cp", src, dest])
+        except OSError:
+            self._builder.echo('unable to save strace output')
+        else:
+            self._builder.echo('debug strace output saved to {}'.format(dest))
             
     def __call__(self, *args, **kwargs):
         """ Run command and return its dependencies and outputs, using strace
@@ -712,7 +724,7 @@ class StraceRunner(Runner):
             self.temp_count += 1
             handle = os.open(outname, os.O_CREAT)
         else:
-            handle, outname = tempfile.mkstemp()
+            handle, outname = tempfile.mkstemp(prefix='strace-', suffix='.txt')
 
         try:
             try:
@@ -727,6 +739,12 @@ class StraceRunner(Runner):
                         '%r was killed unexpectedly' % args[0], '', -1)
             finally:
                 outfile.close()
+        except:
+            if not self.keep_temps:
+                copy_dest = os.path.basename(outname)
+                if outname != copy_dest:
+                    self._copy_strace_log(outname, copy_dest)
+            raise
         finally:
             if not self.keep_temps:
                 os.remove(outname)
